@@ -26,7 +26,7 @@ def get_source(url):
     page_source = driver.page_source
     logger.info(f"Obtained page source for url {url}, len {len(page_source)}",
                 extra={
-                    "url": url,
+                    "scrape_url": url,
                     "len": len(page_source)
                 })
     driver.close()
