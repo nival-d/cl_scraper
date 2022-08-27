@@ -5,6 +5,7 @@ from influxclient import ic
 import logging
 import configparser
 import sys
+import json
 from pythonjsonlogger import jsonlogger
 
 def log_init(log_index):
@@ -93,7 +94,7 @@ def get_data(url):
                     "code": "data_fetch_fail"
                 })
     else:
-        logger.info(f"Data fetched sucesfully: {_data}",
+        logger.info(f"Data fetched sucesfully: {json.dumps(_data)}",
                 extra={
                     "status":"success",
                     "code": "data_fetch_success"
@@ -112,11 +113,11 @@ def data_typer(dd):
                 k_norm = k.lower().replace('\'', '').replace(' ', '_')
                 new_i[k_norm] = v_norm
         normalised_data.append(new_i)
-    logger.info(f"Normalised data: {normalised_data}",
+    logger.info(f"Normalised data: {json.dumps(normalised_data)}",
                 extra={
                     "status": "error",
                     "code": "data_normalizing",
-                    "data": normalised_data
+                    "data": json.dumps(normalised_data)
                 })
     return normalised_data
 
