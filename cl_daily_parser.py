@@ -7,30 +7,62 @@ import configparser
 import sys
 import json
 from pythonjsonlogger import jsonlogger
+from datetime import datetime
+
+class CustomJsonFormatter(jsonlogger.JsonFormatter):
+    def add_fields(self, log_record, record, message_dict):
+        super(CustomJsonFormatter, self).add_fields(log_record, record, message_dict)
+        super(CustomJsonFormatter, self).add_fields(log_record, record, message_dict)
+        if not log_record.get('timestamp'):
+            now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            log_record['timestamp'] = now
+        if log_record.get('level'):
+            log_record['level'] = log_record['level'].upper()
+        else:
+            log_record['level'] = record.levelname
+
 
 def log_init(log_index):
     global logger
     logger = logging.getLogger(log_index)
     logger.setLevel(logging.DEBUG)
     logHandler = logging.StreamHandler()
-    formatter = jsonlogger.JsonFormatter()
+    formatter = CustomJsonFormatter('%(timestamp)s %(level)s %(name)s %(message)s')
     logHandler.setFormatter(formatter)
     logger.addHandler(logHandler)
+    return logger
+
 
 def get_source(url):
-    options = webdriver.firefox.options.Options()
-    options.headless = True
-    driver = webdriver.Firefox(options=options)
-    driver.get(url)
-    time.sleep(3)
-    page_source = driver.page_source
-    logger.info(f"Obtained page source for url {url}, len {len(page_source)}",
+    try:
+        options = webdriver.firefox.options.Options()
+        options.headless = True
+        driver = webdriver.Firefox(options=options)
+        driver.get(url)
+        time.sleep(3)
+        page_source = driver.page_source
+        logger.info(f"Obtained page source for url {url}, len {len(page_source)}",
                 extra={
-                    "scrape_url": url,
-                    "len": len(page_source)
+                    "status": "success",
+                    "code":"get_source",
+                    "data":
+                        {"scrape_url": url,
+                        "len": len(page_source)}
                 })
-    driver.close()
-    return page_source
+        driver.close()
+        return page_source
+
+    except Exception as E:
+        logger.error(f"Error while obtaining page source",
+                extra={
+                    "status": "error",
+                    "code": "get_source",
+                    "data":
+                        {"exception": str(E),
+                        }
+                })
+        sys.exit()
+
 
 def header_processor(bs_data):
     hh = bs_data.findAll("div", class_="graph-headers")
@@ -38,21 +70,30 @@ def header_processor(bs_data):
         logger.error("Empty headers",
                 extra={
                     "status":"error",
-                    "code": "empty_headers"
+                    "code": "empty_headers",
+                    "data": {}
                 })
         sys.exit()
     if len(hh) > 1:
         logger.error("Too many headers",
                 extra={
                     "status":"error",
-                    "code": "too_many_headers"
+                    "code": "too_many_headers",
+                    "data": {"headers": len(hh)}
                 })
         sys.exit()
     headers_tags = hh[0].findAll("div", class_="graph-header")
     headers_values = []
     for i in headers_tags:
         headers_values.append(i.text)
+    logger.error("Completed headers processing",
+                 extra={
+                     "status": "success",
+                     "code": "headers_processing",
+                     "data": {"headers": json.dumps(headers_values)}
+                 })
     return headers_values
+
 
 def row_processor(bs_data, headers):
     rr = bs_data.findAll("div", class_="graph-row")
@@ -60,7 +101,8 @@ def row_processor(bs_data, headers):
         logger.error("Not enough data rows",
                 extra={
                     "status":"error",
-                    "code": "not_enough_rows"
+                    "code": "not_enough_rows",
+                    "data": {"rows_len": len(rr)}
                 })
         sys.exit()
     rows = []
@@ -71,8 +113,14 @@ def row_processor(bs_data, headers):
         for num, j in enumerate(cells):
             row[headers[num]] = j.text
         rows.append(row)
-
+    logger.info("Processed rows",
+                 extra={
+                     "status": "success",
+                     "code": "rows_processing",
+                     "data": {"rows": json.dumps(rows)}
+                 })
     return rows
+
 
 def get_data(url):
     page_source = get_source(url)
@@ -82,7 +130,8 @@ def get_data(url):
         logger.error("Empty index table",
                 extra={
                     "status":"error",
-                    "code": "empty_index_table"
+                    "code": "empty_index_table",
+                    "data": {"content_table": json.dumps(content_table)}
                 })
         sys.exit()
     headers = header_processor(content_table[0])
@@ -94,12 +143,15 @@ def get_data(url):
                     "code": "data_fetch_fail"
                 })
     else:
-        logger.info(f"Data fetched sucesfully: {json.dumps(_data)}",
-                extra={
-                    "status":"success",
-                    "code": "data_fetch_success"
-                })
+        logger.info("Data extraction compete",
+                    extra={
+                        "status": "success",
+                        "code": "data extraction",
+                        "data": {"_data": json.dumps(_data)}
+                    })
+
     return _data
+
 
 def data_typer(dd):
     normalised_data = []
@@ -115,7 +167,7 @@ def data_typer(dd):
         normalised_data.append(new_i)
     logger.info(f"Normalised data: {json.dumps(normalised_data)}",
                 extra={
-                    "status": "error",
+                    "status": "success",
                     "code": "data_normalizing",
                     "data": json.dumps(normalised_data)
                 })
@@ -129,7 +181,7 @@ if __name__ == '__main__':
         config.read(CONFIG_FILE)
     except IndexError:
         sys.exit("Config file not supplied")
-    log_init(config['DEFAULT']['ES_INDEX'])
+    logger = log_init(config['DEFAULT']['ES_INDEX'])
     dd = get_data(config['DEFAULT']['URL'])
     norm_dd = data_typer(dd)
     ici = ic(config['DEFAULT']['INFLUX_URL'],
@@ -138,3 +190,9 @@ if __name__ == '__main__':
              config['DEFAULT']['BUCKET']
              )
     ici.put_data_in_bucket(norm_dd,  config['DEFAULT']['POINT_NAME'])
+    logger.info("Scrape run competed successfully",
+                extra={
+                    "status": "success",
+                    "code": "scraping_status",
+                    "data": {}
+                })
