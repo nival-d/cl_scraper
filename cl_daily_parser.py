@@ -126,6 +126,7 @@ def get_data(url):
     page_source = get_source(url)
     bs = bs4.BeautifulSoup(page_source, "lxml")
     content_table = bs.findAll("div", id="dailyIndices")
+    print(content_table)
     if len(content_table) < 1:
         logger.error("Empty index table",
                 extra={
@@ -136,6 +137,8 @@ def get_data(url):
         sys.exit()
     headers = header_processor(content_table[0])
     _data = row_processor(content_table[0], headers)
+    timetag = bs.findAll("div", class_="graph-date")[0].text
+    print(timetag)
     if not _data:
         logger.error("Failed to obtain data",
                 extra={
@@ -147,10 +150,11 @@ def get_data(url):
                     extra={
                         "status": "success",
                         "code": "data extraction",
-                        "data": {"_data": json.dumps(_data)}
+                        "data": {"_data": json.dumps(_data),
+                                 "timetag": timetag}
                     })
 
-    return _data
+    return _data, timetag
 
 
 def data_typer(dd):
@@ -182,17 +186,36 @@ if __name__ == '__main__':
     except IndexError:
         sys.exit("Config file not supplied")
     logger = log_init(config['DEFAULT']['ES_INDEX'])
-    dd = get_data(config['DEFAULT']['URL'])
+    dd, timetag = get_data(config['DEFAULT']['URL'])
     norm_dd = data_typer(dd)
     ici = ic(config['DEFAULT']['INFLUX_URL'],
              config['DEFAULT']['TOKEN'],
              config['DEFAULT']['ORG'],
              config['DEFAULT']['BUCKET']
              )
-    ici.put_data_in_bucket(norm_dd,  config['DEFAULT']['POINT_NAME'])
-    logger.info("Scrape run competed successfully",
-                extra={
-                    "status": "success",
-                    "code": "scraping_status",
-                    "data": {}
-                })
+    #ici.put_data_in_bucket(norm_dd,  config['DEFAULT']['POINT_NAME'])
+    try:
+        r = ici.put_data_in_bucket_wrapper(norm_dd, timetag, config['DEFAULT']['POINT_NAME'])
+        if r:
+            logger.info("Scrape run competed successfully",
+                    extra={
+                        "status": "success",
+                        "code": "scraping_status",
+                        "data": {}
+                    })
+        else:
+            logger.info("Data already recorded",
+                    extra={
+                        "status": "success",
+                        "code": "already_recorded",
+                        "data": {}
+                    })
+    except Exception as e:
+        logger.error("Exception occured",
+                    extra={
+                        "status": "error",
+                        "code": "exception",
+                        "data": {
+                            "exception": str(e)
+                        }
+                    })
